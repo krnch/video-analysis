@@ -4,6 +4,12 @@ Updated September 29, 2026.
 
 **Stage: documentation-only; implementation and hosted processing have not started.**
 
+## Manager handoff
+
+Use [HYPERSCALE_EXECUTION.md](HYPERSCALE_EXECUTION.md) as the implementation brief: V1 deterministic clipping, V2 analysis/captions, V3 private-result contract and measurement. Coordinate at most two active implementation workers total across this repo and web-scraper, one per repo. Start coding on owner delegation; do not create another planning-only deliverable or infer permission for unattended spending.
+
+This branch adds a documentation brief only. No manager/agent was assigned, no application code was implemented and no processing workflow was enabled. Update this execution page with actual implementation evidence when work begins.
+
 ## Repository setup
 
 - [x] Define public reusable scope and private-data boundary.
