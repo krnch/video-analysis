@@ -8,7 +8,9 @@ Updated September 29, 2026.
 
 - [x] Define public reusable scope and private-data boundary.
 - [x] Write plan, README, execution checklist and defensive ignore rules.
-- [ ] Verify documentation-only publication to GitHub.
+- [x] Verify documentation-only publication to [GitHub](https://github.com/krnch/video-analysis).
+
+Verified September 29, 2026, 22:11 UTC: public visibility, `main` branch, five allowlisted documentation/ignore files, remote blobs matching local content, **zero workflows and zero Actions runs**. Initial documentation commit: `d84a11fd68d5328aff96399ee881643e4daf047c`. This page's verification update is a subsequent documentation commit.
 
 ## Implementation remaining
 
