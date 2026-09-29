@@ -72,6 +72,10 @@ class ClipperTests(unittest.TestCase):
         for source in [symlink, self.source.parent / ".." / self.source.parent.name / self.source.name]:
             with self.assertRaises(ClipError):
                 clip(source, self.output, [("00:00:00", "00:00:01")])
+        linked_parent = Path(self.workspace.name) / "linked-parent"
+        linked_parent.symlink_to(Path(self.workspace.name), target_is_directory=True)
+        with self.assertRaises(ClipError):
+            clip(self.source, linked_parent / "clips", [("00:00:00", "00:00:01")])
         self.output.mkdir()
         with self.assertRaises(ClipError):
             clip(self.source, self.output, [("00:00:00", "00:00:01")])
@@ -83,6 +87,20 @@ class ClipperTests(unittest.TestCase):
         with patch("video_clipper.MAX_DURATION", 1):
             with self.assertRaisesRegex(ClipError, "two minutes"):
                 clip(self.source, self.output, [("00:00:00", "00:00:01")])
+        self.assertFalse(self.output.exists())
+
+    def test_rejects_oversized_total_output_without_partial_result(self):
+        with patch("video_clipper.MAX_BYTES", self.source.stat().st_size + 1):
+            with self.assertRaises(ClipError):
+                clip(self.source, self.output, [("00:00:00", "00:00:02")] * 3)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(list(Path(self.workspace.name).iterdir()), [])
+
+    def test_rejects_invalid_video(self):
+        invalid = Path(self.workspace.name) / "invalid.mp4"
+        invalid.write_bytes(b"not video")
+        with self.assertRaises(ClipError):
+            clip(invalid, self.output, [("00:00:00", "00:00:01")])
         self.assertFalse(self.output.exists())
 
     def test_render_failure_rolls_back_all_clips(self):
