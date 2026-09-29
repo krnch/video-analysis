@@ -26,8 +26,8 @@ Run the synthetic integration tests with `python3 -m unittest discover -s tests 
 
 ## Future scope
 
-- Inspect a local video and validate duration, format and file size.
-- Accept supplied timestamps/transcripts; select and render clips deterministically.
+- Extend inspection with format-specific metadata validation.
+- Accept supplied transcripts and select highlights automatically.
 - Add optional transcription and model-based selection later, with explicit compute and cost limits.
 - Test on synthetic or permissively licensed samples with attribution and provenance.
 
