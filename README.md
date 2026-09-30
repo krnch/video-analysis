@@ -1,6 +1,6 @@
 # Video Analysis
 
-A reusable local video clipper, with future plans for transcript adapters, highlight selection and subtitles.
+A reusable local video clipper with validated transcript adapters, deterministic highlight candidates and burned-in captions.
 
 **Status: V1 local-only clipper.** There is no model integration, processed dataset or media-processing Actions workflow. This repository does not provide an unlimited free video-processing service.
 
@@ -16,9 +16,9 @@ video-clipper /tmp/clipper-source.mp4 /tmp/clipper-results \
 ffprobe -v error -show_entries format=duration -of json /tmp/clipper-results/clip-001.mp4
 ```
 
-The destination must not already exist; remove it before repeating this example. No download, timestamp inference, transcription or network access is performed. Each `--clip` takes a start and end in `HH:MM:SS[.ffffff]` format; start must precede end and both must be within the probed source duration. The package also exposes `video_clipper.clip(source, output_dir, ranges)` for local Python callers.
+The destination must not already exist; remove it before repeating this example. No download or network access is performed. Each `--clip` takes a start and end in `HH:MM:SS[.ffffff]` format; start must precede end and both must be within the probed source duration. The package also exposes `video_clipper.clip(source, output_dir, ranges, captions=None)` for local Python callers. Captions are supplied as validated `{start, end, text}` records and are burned into the video.
 
-`manifest.json` has `schema_version: 1` and a `clips` array in argument order. Each entry contains `id` (`clip-001`, etc.), `filename` (relative to the results directory), `bytes` (file length), `sha256` (hex SHA-256 of the file), and `duration_seconds` (the rendered file's ffprobe duration). Clips are re-encoded as MP4 (MPEG-4 video, AAC audio if present). The rendered duration must be within **0.25 seconds** of the requested end minus start; otherwise the entire operation fails. Seeking and frame boundaries can cause smaller differences.
+`manifest.json` has `schema_version: 1` without captions, or `schema_version: 2` with a `captions` entry. Each clip entry contains `id`, `filename`, `bytes`, `sha256`, and `duration_seconds`. Transcript JSON uses a `segments` array with ordered, non-overlapping `start`, `end`, and non-empty `text` fields. `transcript.load_transcript`, `highlight_candidates`, and `analyze_transcript` provide validation, deterministic suggested scores, and content-hash cache reuse. Suggested scores and `human_rating` are separate fields; no model or credentials are needed.
 
 Limits: one regular local source at most 120 seconds and 100,000,000 bytes, 1–3 clips, at most 100,000,000 bytes of clip output, and a shared subprocess timeout of 840 seconds (14 minutes). Paths containing `..` or symlink components are rejected. Errors return a nonzero exit code and leave no destination or partial result; already-existing destinations are never intentionally replaced. Output names are fixed, collision-free within each run, and contain no user-supplied text. Keep all media and result manifests outside git; `.gitignore` adds accidental-staging guards, not a confidentiality boundary.
 

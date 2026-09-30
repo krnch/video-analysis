@@ -54,6 +54,14 @@ class ClipperTests(unittest.TestCase):
             )
             self.assertLessEqual(abs(item["duration_seconds"] - 1), 0.25)
 
+    def test_caption_rendering_adds_caption_manifest(self):
+        result = clip(self.source, self.output, [("00:00:00", "00:00:01")], [
+            {"start": 0, "end": 1, "text": "Synthetic caption"},
+        ])
+        self.assertEqual(result["schema_version"], 2)
+        self.assertEqual(result["captions"][0]["format"], "srt")
+        self.assertTrue((self.output / "clip-001.mp4").is_file())
+
     def test_rejects_invalid_ranges_without_output(self):
         for ranges in [
             [], [("00:00:00", "00:00:01")] * 4,

@@ -13,6 +13,7 @@ import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from transcript import TranscriptSegment, TranscriptError, validate_transcript
 
 MAX_BYTES = 100_000_000
 MAX_DURATION = Decimal("120")
@@ -88,7 +89,36 @@ def _timestamp(value):
             + Decimal(seconds) + Decimal("0." + fraction if fraction else "0"))
 
 
-def clip(source, output_dir, ranges):
+def _srt_timestamp(seconds):
+    milliseconds = int(round(seconds * 1000))
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+
+def _caption_file(temporary, captions, clip_start, clip_end):
+    selected = []
+    for index, caption in enumerate(captions, 1):
+        if isinstance(caption, TranscriptSegment):
+            start, end, text = caption.start, caption.end, caption.text
+        else:
+            start, end, text = caption["start"], caption["end"], caption["text"]
+        if end <= clip_start or start >= clip_end:
+            continue
+        selected.append((max(start, clip_start) - clip_start,
+                         min(end, clip_end) - clip_start, text))
+    if not selected:
+        return None
+    path = temporary / "captions.srt"
+    path.write_text("\n".join(
+        f"{index}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n{text}\n"
+        for index, (start, end, text) in enumerate(selected, 1)
+    ) + "\n", encoding="utf-8")
+    return path
+
+
+def clip(source, output_dir, ranges, captions=None):
     """Render supplied (start, end) timestamp pairs and return the manifest.
 
     The destination must not exist; it is published only after every clip and
@@ -110,6 +140,14 @@ def clip(source, output_dir, ranges):
         if start < 0 or end <= start or end > source_duration:
             raise ClipError("clip range must be positive and within source duration")
         parsed.append((start, end))
+    if captions is not None:
+        try:
+            captions = validate_transcript({"segments": [
+                {"start": item.start, "end": item.end, "text": item.text}
+                if isinstance(item, TranscriptSegment) else item for item in captions
+            ]})
+        except (TypeError, KeyError, TranscriptError) as exc:
+            raise ClipError(f"invalid captions: {exc}") from exc
 
     temporary = Path(tempfile.mkdtemp(prefix=".video-clipper-", dir=output_dir.parent))
     try:
@@ -118,13 +156,20 @@ def clip(source, output_dir, ranges):
         for index, (start, end) in enumerate(parsed, 1):
             name = f"clip-{index:03d}.mp4"
             rendered = temporary / name
+            caption_path = _caption_file(temporary, captions, float(start), float(end)) if captions else None
+            filters = [f"subtitles={caption_path}"] if caption_path else []
+            ffmpeg_args = [
+                "ffmpeg", "-v", "error", "-nostdin", "-y", "-i", str(source),
+                "-ss", str(start), "-t", str(end - start),
+                "-map", "0:v:0", "-map", "0:a?", "-map_metadata", "-1",
+                "-map_chapters", "-1", "-c:v", "mpeg4", "-q:v", "4",
+                "-c:a", "aac", "-pix_fmt", "yuv420p", "-threads", "1",
+            ]
+            if filters:
+                ffmpeg_args.extend(["-vf", ",".join(filters)])
+            ffmpeg_args.extend(["-fs", str(MAX_BYTES - total + 1), str(rendered)])
             _run(
-                ["ffmpeg", "-v", "error", "-nostdin", "-y", "-i", str(source),
-                 "-ss", str(start), "-t", str(end - start),
-                 "-map", "0:v:0", "-map", "0:a?", "-map_metadata", "-1",
-                 "-map_chapters", "-1", "-c:v", "mpeg4", "-q:v", "4",
-                 "-c:a", "aac", "-pix_fmt", "yuv420p", "-threads", "1",
-                 "-fs", str(MAX_BYTES - total + 1), str(rendered)],
+                ffmpeg_args,
                 deadline,
             )
             size = rendered.stat().st_size
@@ -145,7 +190,12 @@ def clip(source, output_dir, ranges):
                 "sha256": digest.hexdigest(),
                 "duration_seconds": float(actual_duration),
             })
-        manifest = {"schema_version": 1, "clips": clips}
+        manifest = {"schema_version": 2 if captions else 1, "clips": clips}
+        if captions:
+            manifest["captions"] = [
+                {"filename": "captions.srt", "format": "srt",
+                 "segments": len(captions)}
+            ]
         (temporary / "manifest.json").write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
         )
