@@ -20,6 +20,8 @@ node_modules/
 /data/
 /input/
 /output/
+/clips/
+manifest.json
 /transcripts/
 /highlights/
 /artifacts/
@@ -33,3 +35,6 @@ node_modules/
 *.wav
 *.srt
 *.vtt
+*.egg-info/
+build/
+dist/
