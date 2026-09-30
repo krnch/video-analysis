@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from video_clipper import ClipError, _run, clip
+from video_clipper import ClipError, MockBundleConsumer, _run, clip
 
 
 class ClipperTests(unittest.TestCase):
@@ -53,6 +53,18 @@ class ClipperTests(unittest.TestCase):
                 item["duration_seconds"], places=3,
             )
             self.assertLessEqual(abs(item["duration_seconds"] - 1), 0.25)
+        bundle = json.loads((self.output / "result_bundle.json").read_text())
+        self.assertEqual(bundle["schema_version"], 3)
+        self.assertTrue(bundle["task_id"])
+        self.assertEqual(bundle["core_version"], "1.0.0")
+        self.assertEqual(bundle["source"]["provenance"], "local-file")
+        self.assertEqual(bundle["source"]["bytes"], self.source.stat().st_size)
+        self.assertEqual(bundle["source"]["sha256"], hashlib.sha256(self.source.read_bytes()).hexdigest())
+        self.assertEqual(len(bundle["clips"]), 2)
+        self.assertIn("clip_id", bundle["clips"][0])
+        self.assertTrue(bundle["clips"][0]["captions"]["available"] is False)
+        self.assertEqual(bundle["clips"][0]["requested_range"]["start"], "0.2")
+        self.assertEqual(bundle["clips"][0]["requested_range"]["end"], "1.2")
 
     def test_rejects_invalid_ranges_without_output(self):
         for ranges in [
@@ -125,6 +137,57 @@ class ClipperTests(unittest.TestCase):
         with self.assertRaisesRegex(ClipError, "timed out"):
             _run(["python3", "-c", "import time; time.sleep(10)"],
                  time.monotonic() + 0.05)
+
+    def test_mock_consumer_out_of_order_duplicate_is_idempotent(self):
+        clip(self.source, self.output, [
+            ("00:00:00.200", "00:00:01.200"),
+            ("00:00:01.500", "00:00:02.500"),
+        ])
+        bundle_path = self.output / "result_bundle.json"
+        bundle = json.loads(bundle_path.read_text())
+        bundle["clips"] = list(reversed(bundle["clips"]))
+        bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+
+        consumer = MockBundleConsumer(Path(self.workspace.name) / "consumer-state.json")
+        imported = consumer.import_bundle(bundle_path)
+        self.assertEqual(imported["status"], "imported")
+        rated_clip = bundle["clips"][0]["clip_id"]
+        consumer.set_human_rating(rated_clip, 4.5)
+        self.assertEqual(consumer.get_human_rating(rated_clip), 4.5)
+
+        duplicate = consumer.import_bundle(bundle_path)
+        self.assertEqual(duplicate["status"], "duplicate_ignored")
+        self.assertEqual(consumer.get_human_rating(rated_clip), 4.5)
+
+    def test_mock_consumer_rejects_partial_bundle(self):
+        clip(self.source, self.output, [("00:00:00.200", "00:00:01.200")])
+        bundle_path = self.output / "result_bundle.json"
+        bundle = json.loads(bundle_path.read_text())
+        (self.output / bundle["clips"][0]["filename"]).unlink()
+        consumer = MockBundleConsumer(Path(self.workspace.name) / "consumer-state.json")
+        with self.assertRaisesRegex(ClipError, "missing"):
+            consumer.import_bundle(bundle_path)
+
+    def test_mock_consumer_rejects_corrupt_bundle(self):
+        clip(self.source, self.output, [("00:00:00.200", "00:00:01.200")])
+        bundle_path = self.output / "result_bundle.json"
+        bundle = json.loads(bundle_path.read_text())
+        clip_file = self.output / bundle["clips"][0]["filename"]
+        clip_file.write_bytes(clip_file.read_bytes() + b"corrupt")
+        consumer = MockBundleConsumer(Path(self.workspace.name) / "consumer-state.json")
+        with self.assertRaisesRegex(ClipError, "mismatch"):
+            consumer.import_bundle(bundle_path)
+
+    def test_mock_consumer_rejects_duplicate_task_with_different_content(self):
+        clip(self.source, self.output, [("00:00:00.200", "00:00:01.200")])
+        bundle_path = self.output / "result_bundle.json"
+        bundle = json.loads(bundle_path.read_text())
+        consumer = MockBundleConsumer(Path(self.workspace.name) / "consumer-state.json")
+        self.assertEqual(consumer.import_bundle(bundle_path)["status"], "imported")
+        bundle["clips"][0]["captions"]["available"] = True
+        bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ClipError, "duplicate task_id"):
+            consumer.import_bundle(bundle_path)
 
 
 if __name__ == "__main__":

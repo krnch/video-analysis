@@ -20,9 +20,13 @@ The destination must not already exist; remove it before repeating this example.
 
 `manifest.json` has `schema_version: 1` and a `clips` array in argument order. Each entry contains `id` (`clip-001`, etc.), `filename` (relative to the results directory), `bytes` (file length), `sha256` (hex SHA-256 of the file), and `duration_seconds` (the rendered file's ffprobe duration). Clips are re-encoded as MP4 (MPEG-4 video, AAC audio if present). The rendered duration must be within **0.25 seconds** of the requested end minus start; otherwise the entire operation fails. Seeking and frame boundaries can cause smaller differences.
 
+`result_bundle.json` is emitted alongside `manifest.json` with `schema_version: 3`. It includes `task_id`, `core_version`, source provenance/hash metadata, opaque clip IDs, clip relative filenames, byte lengths, SHA-256 digests, requested ranges, durations, and caption availability flags. Optional model scores must be recorded with a separate `model_scores.provenance` field and are not treated as human approval.
+
 Limits: one regular local source at most 120 seconds and 100,000,000 bytes, 1–3 clips, at most 100,000,000 bytes of clip output, and a shared subprocess timeout of 840 seconds (14 minutes). Paths containing `..` or symlink components are rejected. Errors return a nonzero exit code and leave no destination or partial result; already-existing destinations are never intentionally replaced. Output names are fixed, collision-free within each run, and contain no user-supplied text. Keep all media and result manifests outside git; `.gitignore` adds accidental-staging guards, not a confidentiality boundary.
 
 Run the synthetic integration tests with `python3 -m unittest discover -s tests -v`.
+
+For local/private ingestion tests only, use `video_clipper.MockBundleConsumer` to import `result_bundle.json` files from disk. It validates clip file presence and hashes, ignores byte-identical duplicate imports by `task_id`, preserves existing human ratings, and exposes no network receiver or upload endpoint.
 
 ## Future scope
 
