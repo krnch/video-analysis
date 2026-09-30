@@ -24,6 +24,13 @@ Limits: one regular local source at most 120 seconds and 100,000,000 bytes, 1–
 
 Run the synthetic integration tests with `python3 -m unittest discover -s tests -v`.
 
+## Result bundle and local consumer
+
+`result_bundle.build_bundle(task_id=..., source_path=..., output_dir=..., ranges=..., source_attribution=..., model_scores=...)` reads an existing clipping result and returns a JSON-serialisable bundle containing the task ID, core version, source provenance (basename, byte length, SHA-256, optional attribution), and per-clip entries with opaque IDs, relative filenames, byte lengths, SHA-256, rendered duration, requested range and caption availability (sidecar `.vtt`, `.srt` or `.captions.json` next to each clip). Optional `model_scores` entries carry their own provenance (`model_name`, `model_version`, `produced_at`) and always serialise with `"approval": null`; approval is a separate human decision, not a model output. `result_bundle.validate_bundle(bundle)` checks the wire contract of a bundle received from elsewhere. `bundle_id` is a deterministic SHA-256 of `task_id` and source hash so a repeated run yields the same identifier.
+
+`mock_consumer.MockConsumer` is an **in-process** sink used to exercise the contract in tests. It exposes no network endpoint. `import_bundle(bundle, clip_dir=None)` returns `"accepted"` or `"duplicate"` and raises `ConsumerError` on corrupt (schema-invalid or hash-mismatched) or partial (missing referenced clip file) inputs; state is never partially applied. Bundles arriving in any order are accepted independently. `set_rating`/`get_rating` attach human ratings that survive repeated identical imports of the same bundle.
+
+
 ## Future scope
 
 - Extend inspection with format-specific metadata validation.
