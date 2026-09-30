@@ -2,7 +2,7 @@
 
 Updated September 29, 2026.
 
-**Stage: local-only V1 clipping implemented; hosted processing has not started.**
+**Stage: local-only V3 clipping/result-bundle contract + mock consumer implemented; hosted processing has not started.**
 
 ## Repository setup
 

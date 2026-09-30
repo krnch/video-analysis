@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -18,6 +19,7 @@ MAX_BYTES = 100_000_000
 MAX_DURATION = Decimal("120")
 MAX_CLIPS = 3
 TIME_LIMIT = 840  # Shared budget for all probes and renders, below 15 minutes.
+CORE_VERSION = "1.0.0"
 TIMESTAMP = re.compile(r"^(\d+):([0-5]\d):([0-5]\d)(?:\.(\d{1,6}))?$")
 
 
@@ -88,7 +90,37 @@ def _timestamp(value):
             + Decimal(seconds) + Decimal("0." + fraction if fraction else "0"))
 
 
-def clip(source, output_dir, ranges):
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _normalize_model_scores(value):
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ClipError("model_scores must be a list when provided")
+    normalized = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ClipError("each model score must be an object")
+        if "provenance" not in item or not isinstance(item["provenance"], dict):
+            raise ClipError("each model score must include provenance")
+        if "score" not in item or not isinstance(item["score"], (int, float)):
+            raise ClipError("each model score must include numeric score")
+        score = float(item["score"])
+        if not math.isfinite(score):
+            raise ClipError("model score must be finite")
+        normalized_item = dict(item)
+        normalized_item["score"] = score
+        normalized.append(normalized_item)
+    return normalized
+
+
+def clip(source, output_dir, ranges, *, task_id=None, source_provenance=None, model_scores=None):
     """Render supplied (start, end) timestamp pairs and return the manifest.
 
     The destination must not exist; it is published only after every clip and
@@ -100,6 +132,8 @@ def clip(source, output_dir, ranges):
         raise ClipError("provide between one and three clips")
     if source.stat().st_size > MAX_BYTES:
         raise ClipError("source exceeds 100 MB")
+    source_size = source.stat().st_size
+    source_sha256 = _sha256_file(source)
     deadline = time.monotonic() + TIME_LIMIT
     source_duration = _duration(source, deadline)
     if source_duration > MAX_DURATION:
@@ -110,6 +144,16 @@ def clip(source, output_dir, ranges):
         if start < 0 or end <= start or end > source_duration:
             raise ClipError("clip range must be positive and within source duration")
         parsed.append((start, end))
+    if task_id is None:
+        task_id = f"task-{hashlib.sha256((str(source) + repr(ranges)).encode('utf-8')).hexdigest()[:16]}"
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ClipError("task_id must be a non-empty string")
+    if source_provenance is None:
+        source_provenance = {"kind": "local_file", "descriptor": source.name}
+    if not isinstance(source_provenance, dict):
+        raise ClipError("source_provenance must be an object")
+    if model_scores is not None and len(model_scores) != len(parsed):
+        raise ClipError("model_scores must have one entry per requested clip")
 
     temporary = Path(tempfile.mkdtemp(prefix=".video-clipper-", dir=output_dir.parent))
     try:
@@ -134,25 +178,51 @@ def clip(source, output_dir, ranges):
             actual_duration = _duration(rendered, deadline)
             if abs(actual_duration - (end - start)) > Decimal("0.25"):
                 raise ClipError("rendered clip duration differs from requested range")
-            digest = hashlib.sha256()
-            with rendered.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            clips.append({
+            rendered_sha256 = _sha256_file(rendered)
+            clip_id = "clip_" + hashlib.sha256(
+                f"{task_id}:{index}:{name}".encode("utf-8")
+            ).hexdigest()[:16]
+            item = {
+                "clip_id": clip_id,
                 "id": f"clip-{index:03d}",
                 "filename": name,
                 "bytes": size,
-                "sha256": digest.hexdigest(),
+                "sha256": rendered_sha256,
                 "duration_seconds": float(actual_duration),
-            })
+                "requested_range_seconds": {
+                    "start_seconds": float(start),
+                    "end_seconds": float(end),
+                },
+                "captions": {"available": False, "filename": None},
+            }
+            if model_scores is not None:
+                normalized_scores = _normalize_model_scores(model_scores[index - 1])
+                if normalized_scores:
+                    item["model_scores"] = normalized_scores
+            clips.append(item)
         manifest = {"schema_version": 1, "clips": clips}
+        bundle = {
+            "schema_version": 3,
+            "task_id": task_id,
+            "core_version": CORE_VERSION,
+            "source": {
+                "filename": source.name,
+                "bytes": source_size,
+                "sha256": source_sha256,
+                "provenance": source_provenance,
+            },
+            "clips": clips,
+        }
         (temporary / "manifest.json").write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        (temporary / "result_bundle.json").write_text(
+            json.dumps(bundle, indent=2) + "\n", encoding="utf-8"
         )
         if output_dir.exists() or output_dir.is_symlink():
             raise ClipError("output directory already exists")
         temporary.rename(output_dir)
-        return manifest
+        return bundle
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)
