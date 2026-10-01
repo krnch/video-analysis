@@ -3,6 +3,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,13 +37,22 @@ class ClipperTests(unittest.TestCase):
             ("00:00:01.500", "00:00:02.500"),
         ])
         self.assertEqual(result, json.loads((self.output / "manifest.json").read_text()))
-        self.assertEqual(result["schema_version"], 1)
-        self.assertEqual([item["id"] for item in result["clips"]],
-                         ["clip-001", "clip-002"])
+        self.assertEqual(result["schema_version"], 3)
+        self.assertTrue(result["task_id"])
+        self.assertEqual(result["source"]["provenance"], "local_file")
+        self.assertEqual(
+            result["source"]["sha256"],
+            hashlib.sha256(self.source.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(len({item["id"] for item in result["clips"]}), 2)
         for item in result["clips"]:
+            uuid.UUID(hex=item["id"])
             path = self.output / item["filename"]
             self.assertEqual(path.stat().st_size, item["bytes"])
             self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), item["sha256"])
+            self.assertEqual(item["range_seconds"]["end"] -
+                             item["range_seconds"]["start"], 1)
+            self.assertFalse(item["captions_available"])
             probe = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                  "-of", "json", str(path)],

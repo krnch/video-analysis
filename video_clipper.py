@@ -10,6 +10,7 @@ import signal
 import subprocess
 import tempfile
 import time
+import uuid
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -18,6 +19,7 @@ MAX_BYTES = 100_000_000
 MAX_DURATION = Decimal("120")
 MAX_CLIPS = 3
 TIME_LIMIT = 840  # Shared budget for all probes and renders, below 15 minutes.
+CORE_VERSION = "1.0.0"
 TIMESTAMP = re.compile(r"^(\d+):([0-5]\d):([0-5]\d)(?:\.(\d{1,6}))?$")
 
 
@@ -79,6 +81,14 @@ def _duration(path, deadline):
     return duration
 
 
+def _sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _timestamp(value):
     match = TIMESTAMP.fullmatch(value)
     if not match:
@@ -102,6 +112,7 @@ def clip(source, output_dir, ranges):
         raise ClipError("source exceeds 100 MB")
     deadline = time.monotonic() + TIME_LIMIT
     source_duration = _duration(source, deadline)
+    source_sha256 = _sha256(source)
     if source_duration > MAX_DURATION:
         raise ClipError("source exceeds two minutes")
     parsed = []
@@ -134,18 +145,26 @@ def clip(source, output_dir, ranges):
             actual_duration = _duration(rendered, deadline)
             if abs(actual_duration - (end - start)) > Decimal("0.25"):
                 raise ClipError("rendered clip duration differs from requested range")
-            digest = hashlib.sha256()
-            with rendered.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
             clips.append({
-                "id": f"clip-{index:03d}",
+                "id": uuid.uuid4().hex,
                 "filename": name,
                 "bytes": size,
-                "sha256": digest.hexdigest(),
+                "sha256": _sha256(rendered),
                 "duration_seconds": float(actual_duration),
+                "range_seconds": {"start": float(start), "end": float(end)},
+                "captions_available": False,
             })
-        manifest = {"schema_version": 1, "clips": clips}
+        manifest = {
+            "schema_version": 3,
+            "task_id": str(uuid.uuid4()),
+            "core_version": CORE_VERSION,
+            "source": {
+                "provenance": "local_file",
+                "filename": source.name,
+                "sha256": source_sha256,
+            },
+            "clips": clips,
+        }
         (temporary / "manifest.json").write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
         )
