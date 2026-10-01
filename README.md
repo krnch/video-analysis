@@ -2,7 +2,7 @@
 
 A reusable local video clipper, with future plans for transcript adapters, highlight selection and subtitles.
 
-**Status: V1 local-only clipper.** There is no model integration, processed dataset or media-processing Actions workflow. This repository does not provide an unlimited free video-processing service.
+**Status: local-only clipper with a versioned result contract and mock consumer.** There is no model integration, processed dataset or media-processing Actions workflow. This repository does not provide an unlimited free video-processing service.
 
 ## Clip a local video
 
@@ -18,7 +18,9 @@ ffprobe -v error -show_entries format=duration -of json /tmp/clipper-results/cli
 
 The destination must not already exist; remove it before repeating this example. No download, timestamp inference, transcription or network access is performed. Each `--clip` takes a start and end in `HH:MM:SS[.ffffff]` format; start must precede end and both must be within the probed source duration. The package also exposes `video_clipper.clip(source, output_dir, ranges)` for local Python callers.
 
-`manifest.json` has `schema_version: 1` and a `clips` array in argument order. Each entry contains `id` (`clip-001`, etc.), `filename` (relative to the results directory), `bytes` (file length), `sha256` (hex SHA-256 of the file), and `duration_seconds` (the rendered file's ffprobe duration). Clips are re-encoded as MP4 (MPEG-4 video, AAC audio if present). The rendered duration must be within **0.25 seconds** of the requested end minus start; otherwise the entire operation fails. Seeking and frame boundaries can cause smaller differences.
+`manifest.json` is a schema-version-3 result bundle. It contains a task UUID, core version, and source provenance (`local_file`, basename and SHA-256; never the source path). Each clip has an opaque UUID, a filename relative to the results directory, byte length, SHA-256, rendered duration, requested start/end range, and `captions_available`. Optional `model_scores` entries carry a model name, numeric score and provenance; they are model outputs, not approval or human ratings. Clips are re-encoded as MP4 (MPEG-4 video, AAC audio if present). The rendered duration must be within **0.25 seconds** of the requested end minus start; otherwise the entire operation fails. Seeking and frame boundaries can cause smaller differences.
+
+`result_consumer.MockConsumer` is a local-only SQLite mock for testing private-consumer compatibility. It validates the whole manifest and every clip hash before importing, accepts clips in any manifest order, rejects duplicate IDs and corrupt or partial bundles, and treats an identical task re-import as a no-op. Human ratings are stored separately and are not overwritten by re-import. It has no network receiver, credentials, or upload API; use only synthetic/local fixtures.
 
 Limits: one regular local source at most 120 seconds and 100,000,000 bytes, 1–3 clips, at most 100,000,000 bytes of clip output, and a shared subprocess timeout of 840 seconds (14 minutes). Paths containing `..` or symlink components are rejected. Errors return a nonzero exit code and leave no destination or partial result; already-existing destinations are never intentionally replaced. Output names are fixed, collision-free within each run, and contain no user-supplied text. Keep all media and result manifests outside git; `.gitignore` adds accidental-staging guards, not a confidentiality boundary.
 
